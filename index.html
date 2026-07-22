@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Wikipedia Live Feed</title>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --panel: #14171c;
+    --border: #2a2f37;
+    --text: #e7ebf0;
+    --muted: #8a93a1;
+    --accent: #4da3ff;
+    --green: #3ecf6a;
+    --red: #ff5c5c;
+    --flag: #ffb020;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  header h1 {
+    font-size: 16px;
+    margin: 0;
+    white-space: nowrap;
+  }
+  header .stat {
+    font-size: 13px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  header .stat b { color: var(--accent); }
+  header select, header button, header input[type=text] {
+    background: #1c2027;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+  header button {
+    cursor: pointer;
+  }
+  header button.active {
+    background: var(--accent);
+    color: #071018;
+    border-color: var(--accent);
+  }
+  label.chk {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  main {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+  }
+  #feed {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+  }
+  .row {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    padding: 7px 10px;
+    border-bottom: 1px solid #1a1e24;
+    font-size: 13px;
+    border-left: 3px solid transparent;
+    animation: fadein .25s ease-out;
+  }
+  .row.flagged {
+    border-left-color: var(--flag);
+    background: rgba(255,176,32,0.08);
+  }
+  @keyframes fadein {
+    from { background: rgba(77,163,255,0.18); }
+  }
+  .row .time { color: var(--muted); width: 66px; flex-shrink: 0; }
+  .row .wiki { color: var(--accent); width: 110px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .title { font-weight: 600; flex-shrink: 0; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .title a { color: var(--text); text-decoration: none; }
+  .row .title a:hover { text-decoration: underline; }
+  .row .comment { color: var(--muted); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .user { color: var(--muted); width: 130px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .bot { color: #555; font-size: 11px; }
+  .row .delta { width: 56px; text-align: right; flex-shrink: 0; }
+  .row .delta.pos { color: var(--green); }
+  .row .delta.neg { color: var(--red); }
+  #side {
+    width: 260px;
+    flex-shrink: 0;
+    background: var(--panel);
+    border-left: 1px solid var(--border);
+    padding: 14px;
+    overflow-y: auto;
+  }
+  #side h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: var(--muted);
+    margin: 0 0 8px;
+  }
+  #watchInput {
+    width: 100%;
+    margin-bottom: 8px;
+  }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #1c2027;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 4px 10px;
+    font-size: 12px;
+    margin: 0 6px 6px 0;
+  }
+  .chip button {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 0;
+  }
+  #ttsMode {
+    width: 100%;
+    margin-top: 6px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Wikipedia Live Feed</h1>
+  <button id="pauseBtn">Pause</button>
+  <span class="stat">edits/sec <b id="rate">0</b></span>
+  <span class="stat">shown <b id="shownCount">0</b></span>
+  <select id="wikiFilter">
+    <option value="">All wikis</option>
+    <option value="en.wikipedia.org" selected>English Wikipedia</option>
+    <option value="www.wikidata.org">Wikidata</option>
+    <option value="commons.wikimedia.org">Wikimedia Commons</option>
+    <option value="de.wikipedia.org">German Wikipedia</option>
+    <option value="fr.wikipedia.org">French Wikipedia</option>
+  </select>
+  <label class="chk"><input type="checkbox" id="hideBots" checked> hide bots</label>
+  <label class="chk"><input type="checkbox" id="alertSound" checked> alert sound</label>
+</header>
+
+<main>
+  <div id="feed"></div>
+  <div id="side">
+    <h2>Watch list</h2>
+    <input id="watchInput" type="text" placeholder="keyword or page title, Enter to add">
+    <div id="watchChips"></div>
+
+    <h2 style="margin-top:18px">Text-to-speech</h2>
+    <select id="ttsMode">
+      <option value="off">Off</option>
+      <option value="flagged" selected>Flagged matches only</option>
+      <option value="all">Everything visible</option>
+    </select>
+  </div>
+</main>
+
+<script>
+const feedEl = document.getElementById('feed');
+const rateEl = document.getElementById('rate');
+const shownCountEl = document.getElementById('shownCount');
+const pauseBtn = document.getElementById('pauseBtn');
+const wikiFilter = document.getElementById('wikiFilter');
+const hideBots = document.getElementById('hideBots');
+const alertSoundChk = document.getElementById('alertSound');
+const watchInput = document.getElementById('watchInput');
+const watchChips = document.getElementById('watchChips');
+const ttsMode = document.getElementById('ttsMode');
+
+let paused = false;
+let watchList = [];
+let eventCount = 0;
+let shown = 0;
+const MAX_ROWS = 300;
+const ttsQueue = [];
+const MAX_TTS_QUEUE = 6;
+
+pauseBtn.onclick = () => {
+  paused = !paused;
+  pauseBtn.textContent = paused ? 'Resume' : 'Pause';
+  pauseBtn.classList.toggle('active', paused);
+};
+
+watchInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && watchInput.value.trim()) {
+    watchList.push(watchInput.value.trim().toLowerCase());
+    watchInput.value = '';
+    renderWatchChips();
+  }
+});
+
+function renderWatchChips() {
+  watchChips.innerHTML = '';
+  watchList.forEach((w, i) => {
+    const chip = document.createElement('div');
+    chip.className = 'chip';
+    chip.innerHTML = `<span></span><button>x</button>`;
+    chip.querySelector('span').textContent = w;
+    chip.querySelector('button').onclick = () => {
+      watchList.splice(i, 1);
+      renderWatchChips();
+    };
+    watchChips.appendChild(chip);
+  });
+}
+
+function isFlagged(title, comment, user) {
+  if (!watchList.length) return false;
+  const hay = (title + ' ' + comment + ' ' + user).toLowerCase();
+  return watchList.some(w => hay.includes(w));
+}
+
+function beep() {
+  if (!alertSoundChk.checked) return;
+  const ctx = beep.ctx || (beep.ctx = new (window.AudioContext || window.webkitAudioContext)());
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.frequency.value = 880;
+  gain.gain.setValueAtTime(0.15, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start();
+  osc.stop(ctx.currentTime + 0.3);
+}
+
+function queueSpeech(text) {
+  if (ttsQueue.length >= MAX_TTS_QUEUE) return;
+  ttsQueue.push(text);
+  if (ttsQueue.length === 1) speakNext();
+}
+
+function speakNext() {
+  if (!ttsQueue.length) return;
+  const text = ttsQueue[0];
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.rate = 1.05;
+  utter.onend = () => { ttsQueue.shift(); speakNext(); };
+  utter.onerror = () => { ttsQueue.shift(); speakNext(); };
+  speechSynthesis.speak(utter);
+}
+
+function addRow(data, flagged) {
+  const row = document.createElement('div');
+  row.className = 'row' + (flagged ? ' flagged' : '');
+
+  const time = new Date(data.timestamp * 1000).toLocaleTimeString();
+  const delta = data.length ? (data.length.new - data.length.old) : 0;
+  const deltaClass = delta > 0 ? 'pos' : (delta < 0 ? 'neg' : '');
+  const deltaSign = delta > 0 ? '+' : '';
+  const comment = (data.comment || '').replace(/</g, '&lt;');
+
+  row.innerHTML = `
+    <span class="time">${time}</span>
+    <span class="wiki">${data.server_name || ''}</span>
+    <span class="title"><a href="${data.notify_url || data.title_url || '#'}" target="_blank" rel="noopener">${data.title}</a></span>
+    <span class="comment" title="${comment}">${comment}</span>
+    <span class="user">${data.user}${data.bot ? ' <span class=\"bot\">[bot]</span>' : ''}</span>
+    <span class="delta ${deltaClass}">${deltaSign}${delta}</span>
+  `;
+
+  feedEl.prepend(row);
+  shown++;
+  shownCountEl.textContent = shown;
+  while (feedEl.children.length > MAX_ROWS) feedEl.removeChild(feedEl.lastChild);
+}
+
+const es = new EventSource('https://stream.wikimedia.org/v2/stream/recentchange');
+
+es.onmessage = (e) => {
+  if (paused) return;
+  eventCount++;
+  let data;
+  try { data = JSON.parse(e.data); } catch { return; }
+  if (data.type === 'log' && !data.title) return;
+
+  const wikiSel = wikiFilter.value;
+  if (wikiSel && data.server_name !== wikiSel) return;
+  if (hideBots.checked && data.bot) return;
+
+  const flagged = isFlagged(data.title || '', data.comment || '', data.user || '');
+  addRow(data, flagged);
+
+  if (flagged) {
+    beep();
+    if (ttsMode.value !== 'off') {
+      queueSpeech(`Alert. ${data.user} edited ${data.title}. ${data.comment || ''}`);
+    }
+  } else if (ttsMode.value === 'all') {
+    queueSpeech(`${data.user} edited ${data.title}.`);
+  }
+};
+
+setInterval(() => {
+  rateEl.textContent = eventCount;
+  eventCount = 0;
+}, 1000);
+</script>
+
+</body>
+</html>
