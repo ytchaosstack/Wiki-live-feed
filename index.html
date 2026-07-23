@@ -121,9 +121,27 @@
     color: var(--muted);
     margin: 0 0 8px;
   }
-  #watchInput {
-    width: 100%;
+  .watchRow {
+    display: flex;
+    gap: 6px;
     margin-bottom: 8px;
+  }
+  #watchInput {
+    flex: 1;
+    min-width: 0;
+  }
+  #watchAddBtn {
+    background: #1c2027;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  #watchAddBtn:hover {
+    border-color: var(--accent);
   }
   .chip {
     display: inline-flex;
@@ -148,6 +166,35 @@
     width: 100%;
     margin-top: 6px;
   }
+  #flaggedHistory {
+    max-height: 40vh;
+    overflow-y: auto;
+  }
+  .flagEntry {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .flagEntry a {
+    color: var(--flag);
+    font-weight: 600;
+    font-size: 13px;
+    text-decoration: none;
+  }
+  .flagEntry a:hover { text-decoration: underline; }
+  .flagEntry .meta {
+    color: var(--muted);
+    font-size: 11px;
+    margin-top: 2px;
+  }
+  .flagEntry .comment {
+    color: var(--muted);
+    font-size: 12px;
+    margin-top: 2px;
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 </style>
 </head>
 <body>
@@ -155,6 +202,7 @@
 <header>
   <h1>Wikipedia Live Feed</h1>
   <button id="pauseBtn">Pause</button>
+  <button id="clearCacheBtn">Clear cache</button>
   <span class="stat">edits/sec <b id="rate">0</b></span>
   <span class="stat">shown <b id="shownCount">0</b></span>
   <select id="wikiFilter">
@@ -173,7 +221,10 @@
   <div id="feed"></div>
   <div id="side">
     <h2>Watch list</h2>
-    <input id="watchInput" type="text" placeholder="keyword or page title, Enter to add">
+    <div class="watchRow">
+      <input id="watchInput" type="text" placeholder="keyword or page title">
+      <button id="watchAddBtn">Add</button>
+    </div>
     <div id="watchChips"></div>
 
     <h2 style="margin-top:18px">Text-to-speech</h2>
@@ -182,6 +233,9 @@
       <option value="flagged" selected>Flagged matches only</option>
       <option value="all">Everything visible</option>
     </select>
+
+    <h2 style="margin-top:18px">Flagged history (<span id="flaggedCount">0</span>)</h2>
+    <div id="flaggedHistory"></div>
   </div>
 </main>
 
@@ -194,16 +248,27 @@ const wikiFilter = document.getElementById('wikiFilter');
 const hideBots = document.getElementById('hideBots');
 const alertSoundChk = document.getElementById('alertSound');
 const watchInput = document.getElementById('watchInput');
+const watchAddBtn = document.getElementById('watchAddBtn');
 const watchChips = document.getElementById('watchChips');
 const ttsMode = document.getElementById('ttsMode');
+const flaggedHistory = document.getElementById('flaggedHistory');
+const flaggedCountEl = document.getElementById('flaggedCount');
+
+const WATCH_KEY = 'wlf_watchlist';
+const FLAGGED_KEY = 'wlf_flagged_history';
 
 let paused = false;
-let watchList = [];
+let watchList = JSON.parse(localStorage.getItem(WATCH_KEY) || '[]');
+let flaggedData = JSON.parse(localStorage.getItem(FLAGGED_KEY) || '[]');
 let eventCount = 0;
 let shown = 0;
 const MAX_ROWS = 300;
+const MAX_FLAGGED_HISTORY = 500;
 const ttsQueue = [];
 const MAX_TTS_QUEUE = 6;
+
+function saveWatchList() { localStorage.setItem(WATCH_KEY, JSON.stringify(watchList)); }
+function saveFlaggedData() { localStorage.setItem(FLAGGED_KEY, JSON.stringify(flaggedData)); }
 
 pauseBtn.onclick = () => {
   paused = !paused;
@@ -211,13 +276,20 @@ pauseBtn.onclick = () => {
   pauseBtn.classList.toggle('active', paused);
 };
 
+document.getElementById('clearCacheBtn').onclick = clearCache;
+
+function addWatchTerm() {
+  if (!watchInput.value.trim()) return;
+  watchList.push(watchInput.value.trim().toLowerCase());
+  watchInput.value = '';
+  saveWatchList();
+  renderWatchChips();
+}
+
 watchInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && watchInput.value.trim()) {
-    watchList.push(watchInput.value.trim().toLowerCase());
-    watchInput.value = '';
-    renderWatchChips();
-  }
+  if (e.key === 'Enter') addWatchTerm();
 });
+watchAddBtn.addEventListener('click', addWatchTerm);
 
 function renderWatchChips() {
   watchChips.innerHTML = '';
@@ -228,6 +300,7 @@ function renderWatchChips() {
     chip.querySelector('span').textContent = w;
     chip.querySelector('button').onclick = () => {
       watchList.splice(i, 1);
+      saveWatchList();
       renderWatchChips();
     };
     watchChips.appendChild(chip);
@@ -268,6 +341,44 @@ function speakNext() {
   utter.onerror = () => { ttsQueue.shift(); speakNext(); };
   speechSynthesis.speak(utter);
 }
+
+function renderFlaggedHistory() {
+  flaggedCountEl.textContent = flaggedData.length;
+  flaggedHistory.innerHTML = flaggedData.map(data => {
+    const time = new Date(data.timestamp * 1000).toLocaleTimeString();
+    const comment = (data.comment || '').replace(/</g, '&lt;');
+    return `
+      <div class="flagEntry">
+        <a href="${data.notify_url || data.title_url || '#'}" target="_blank" rel="noopener">${data.title}</a>
+        <span class="meta">${time} · ${data.server_name || ''} · ${data.user}</span>
+        <span class="comment" title="${comment}">${comment}</span>
+      </div>
+    `;
+  }).join('');
+}
+
+function addFlaggedHistory(data) {
+  flaggedData.unshift(data);
+  if (flaggedData.length > MAX_FLAGGED_HISTORY) flaggedData.length = MAX_FLAGGED_HISTORY;
+  saveFlaggedData();
+  renderFlaggedHistory();
+}
+
+function clearCache() {
+  if (!confirm('Clear watch list and flagged history? This cannot be undone.')) return;
+  watchList = [];
+  flaggedData = [];
+  localStorage.removeItem(WATCH_KEY);
+  localStorage.removeItem(FLAGGED_KEY);
+  renderWatchChips();
+  renderFlaggedHistory();
+  feedEl.innerHTML = '';
+  shown = 0;
+  shownCountEl.textContent = shown;
+}
+
+renderWatchChips();
+renderFlaggedHistory();
 
 function addRow(data, flagged) {
   const row = document.createElement('div');
@@ -312,6 +423,7 @@ es.onmessage = (e) => {
 
   if (flagged) {
     beep();
+    addFlaggedHistory(data);
     if (ttsMode.value !== 'off') {
       queueSpeech(`Alert. ${data.user} edited ${data.title}. ${data.comment || ''}`);
     }
